@@ -24,32 +24,34 @@
     const file = event.target.files[0];
     if (!file) return;
 
-    // Import it dynamically only when the button is clicked
-    const exifr = (await import('exifr')).default; 
-
-    imageFile = file;
-    previewUrl = URL.createObjectURL(file);
-    
-    locationStatus = 'Scanning image for GPS data... 🔍';
-    exifWarning = false;
-
     try {
+      // Attempt to load exifr safely
+      const module = await import('exifr');
+      const exifr = module.default || module; // Handle different packaging styles
+
+      imageFile = file;
+      previewUrl = URL.createObjectURL(file);
+      
+      // Explicitly reset coordinates so we don't use old data
+      lat = null;
+      lng = null;
+      locationStatus = 'Scanning image for GPS data... 🔍';
+
       const gps = await exifr.gps(file);
       
       if (gps) {
         lat = gps.latitude;
         lng = gps.longitude;
-        locationStatus = `Location found! Lat: ${lat.toFixed(4)} ✅`;
+        locationStatus = `Location found! ✅`;
       } else {
-        lat = null;
-        lng = null;
-        locationStatus = 'No GPS data in this photo ❌';
-        exifWarning = true;
+        locationStatus = 'No GPS in photo. Use manual button! 📍';
       }
-    } catch (error) {
-      console.error("EXIF Error:", error);
-      locationStatus = 'Error reading image data ❌';
-      exifWarning = true;
+    } catch (err) {
+      console.error("Camera processing error:", err);
+      // Even if it fails, let the user at least see the photo preview
+      imageFile = file;
+      previewUrl = URL.createObjectURL(file);
+      locationStatus = 'Error reading GPS. Try manual location.';
     }
   }
 
