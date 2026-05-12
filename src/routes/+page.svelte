@@ -1,7 +1,6 @@
 <script>
   import { onMount } from 'svelte';
   import { addFlowerPin, getAllFlowers } from '$lib/db.js';
-  import exifr from 'exifr';
 
   let flowers = $state([]);
   let isUploading = $state(false);
@@ -25,8 +24,12 @@
     const file = event.target.files[0];
     if (!file) return;
 
+    // Import it dynamically only when the button is clicked
+    const exifr = (await import('exifr')).default; 
+
     imageFile = file;
     previewUrl = URL.createObjectURL(file);
+    
     locationStatus = 'Scanning image for GPS data... 🔍';
     exifWarning = false;
 
