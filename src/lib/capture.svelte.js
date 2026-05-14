@@ -1,47 +1,67 @@
 import { addFlowerPin, getAllFlowers } from '$lib/db.js';
 
 export function createCaptureState() {
+  // --- 1. State Declarations ---
   let flowers = $state([]);
   let imageFile = $state(null);
   let previewUrl = $state(null);
+  
+  // Location States
   let lat = $state(null);
   let lng = $state(null);
-  
-  let locationStatus = $state('Waiting for photo... 📷');
-  let exifWarning = $state(false);
+  let locationStatus = $state('');
+  let exifWarning = $state(false); // <-- This was the culprit!
   let manualGpsLoading = $state(false);
-  let isUploading = $state(false);
-
-  // New AI/Identification States
+  
+  // AI / ID States
   let isIdentifying = $state(false);
   let identificationComplete = $state(false);
   let commonName = $state('');
   let botanicalName = $state('');
   let isSummarizing = $state(false);
   let aiSummary = $state('');
+  
+  // Network States
+  let isUploading = $state(false);
 
+  // --- 2. Database Functions ---
   async function loadFlowers() {
-    flowers = await getAllFlowers();
+    try {
+      flowers = await getAllFlowers();
+    } catch (e) {
+      console.error("Could not load flowers yet:", e);
+    }
+  }
+
+  // --- 3. UI Flow Functions ---
+  function resetCapture() {
+    imageFile = null;
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    previewUrl = null;
+    lat = null;
+    lng = null;
+    locationStatus = '';
+    exifWarning = false;
+    isIdentifying = false;
+    identificationComplete = false;
+    commonName = '';
+    botanicalName = '';
+    aiSummary = '';
   }
 
   async function handlePhotoCapture(event) {
     const file = event.target.files[0];
     if (!file) return;
 
+    // Reset everything for a fresh photo
+    resetCapture();
+
+    // Set the new photo and preview
     imageFile = file;
     previewUrl = URL.createObjectURL(file);
-    
-    // Reset all states for a new photo
-    lat = null;
-    lng = null;
-    exifWarning = false;
-    identificationComplete = false;
-    commonName = '';
-    botanicalName = '';
-    aiSummary = '';
     locationStatus = 'Scanning image for GPS data... 🔍';
 
-    // 1. GPS Extraction
+    // Step 1: GPS Extraction
     try {
       const module = await import('exifr');
       const exifr = module.default || module; 
@@ -60,10 +80,10 @@ export function createCaptureState() {
       exifWarning = true;
     }
 
-    // 2. Auto-Identify Plant (Simulating Pl@ntNet API call)
+    // Step 2: Auto-Identify Plant
     isIdentifying = true;
     try {
-      // TODO: Replace with actual fetch to Supabase Edge Function -> Pl@ntNet
+      // Mocking the Pl@ntNet API delay for now
       await new Promise(resolve => setTimeout(resolve, 1500)); 
       commonName = 'Common Sunflower';
       botanicalName = 'Helianthus annuus';
@@ -106,7 +126,6 @@ export function createCaptureState() {
   async function generateSummary() {
     isSummarizing = true;
     try {
-      // TODO: Replace with actual fetch to Supabase Edge Function -> Gemini 1.5 Flash
       await new Promise(resolve => setTimeout(resolve, 2000));
       aiSummary = "Sunflowers track the sun across the sky, a behavior called heliotropism! Plus, one sunflower is actually made of thousands of tiny flowers packed together.";
     } catch (err) {
@@ -129,28 +148,20 @@ export function createCaptureState() {
       lng, 
       commonName, 
       botanicalName, 
-      ai_summary: aiSummary, // Storing the optional summary
+      ai_summary: aiSummary,
       file: imageFile 
     });
 
     if (newFlower) {
       flowers = [newFlower, ...flowers];
-      imageFile = null;
-      previewUrl = null;
-      lat = null;
-      lng = null;
-      identificationComplete = false;
-      commonName = '';
-      botanicalName = '';
-      aiSummary = '';
-      locationStatus = 'Waiting for photo... 📷';
-      exifWarning = false;
+      resetCapture(); // Clears everything upon success
     } else {
       alert("Failed to upload. Check console.");
     }
     isUploading = false;
   }
 
+  // --- 4. Expose Data and Methods to the Component ---
   return {
     get flowers() { return flowers; },
     get imageFile() { return imageFile; },
@@ -168,6 +179,7 @@ export function createCaptureState() {
     get isSummarizing() { return isSummarizing; },
     get aiSummary() { return aiSummary; },
     
+    resetCapture,
     loadFlowers,
     handlePhotoCapture,
     getManualLocation,

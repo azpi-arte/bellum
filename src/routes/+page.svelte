@@ -13,71 +13,81 @@
   <h1>📸 FloraScan Capture</h1>
 
   <section class="card form-section">
-    <label class="btn-primary camera-btn">
-      Take or Upload Photo
-      <input 
-        type="file" 
-        accept="image/*" 
-        onchange={capture.handlePhotoCapture}
-        hidden
-      />
-    </label>
-
-    {#if capture.previewUrl}
-      <img src={capture.previewUrl} alt="Preview" class="preview-img" />
+    {#if !capture.imageFile}
+      <label class="btn-primary camera-btn">
+        Tap to Scan a Flower
+        <input 
+          type="file" 
+          accept="image/*" 
+          capture="environment" 
+          onchange={capture.handlePhotoCapture}
+          hidden
+        />
+      </label>
     {/if}
 
-    <div class="status-bar" class:warning={capture.exifWarning}>
-      {capture.locationStatus}
-    </div>
+    {#if capture.imageFile}
+      <img src={capture.previewUrl} alt="Preview" class="preview-img" />
 
-    {#if capture.exifWarning}
-      <div class="fallback-ui">
-        <p class="helper-text">Could not extract location from image.</p>
+      {#if capture.locationStatus}
+        <div class="status-bar" class:warning={capture.exifWarning}>
+          {capture.locationStatus}
+        </div>
+      {/if}
+
+      {#if capture.exifWarning}
+        <div class="fallback-ui">
+          <button 
+            class="btn-secondary" 
+            onclick={capture.getManualLocation} 
+            disabled={capture.manualGpsLoading}
+          >
+            {capture.manualGpsLoading ? 'Locating...' : 'Use Device GPS 📍'}
+          </button>
+        </div>
+      {/if}
+
+      {#if capture.isIdentifying}
+        <div class="ai-box loading">
+          <p>🤖 Analyzing petals and leaves...</p>
+        </div>
+      {:else if capture.identificationComplete}
+        <div class="ai-box success">
+          <h3>{capture.commonName}</h3>
+          <p class="botanical-name">{capture.botanicalName}</p>
+          
+          {#if !capture.aiSummary && !capture.isSummarizing}
+            <button class="btn-secondary prompt-btn" onclick={capture.generateSummary}>
+              ✨ Get Fun AI Facts?
+            </button>
+          {/if}
+
+          {#if capture.isSummarizing}
+            <p class="loading-text">Writing a cute summary...</p>
+          {/if}
+
+          {#if capture.aiSummary}
+            <div class="ai-summary-card">
+              <p>{capture.aiSummary}</p>
+            </div>
+          {/if}
+        </div>
+      {/if}
+
+      <div class="action-buttons">
+        <button class="btn-outline" onclick={capture.resetCapture}>
+          Retake 🗑️
+        </button>
+        
         <button 
-          class="btn-secondary" 
-          onclick={capture.getManualLocation} 
-          disabled={capture.manualGpsLoading}
+          class="btn-primary submit-btn" 
+          onclick={capture.submitFlower} 
+          disabled={capture.isUploading || !capture.hasLocation || !capture.identificationComplete}
         >
-          {capture.manualGpsLoading ? 'Loading...' : 'Use Current Device Location 📍'}
+          {capture.isUploading ? 'Saving...' : 'Upload to Map 🗺️'}
         </button>
       </div>
     {/if}
-
-    {#if capture.isIdentifying}
-      <div class="ai-box loading">
-        <p>🤖 AI is identifying this plant...</p>
-      </div>
-    {:else if capture.identificationComplete}
-      <div class="ai-box success">
-        <h3>{capture.commonName}</h3>
-        <p class="botanical-name">{capture.botanicalName}</p>
-        
-        {#if !capture.aiSummary && !capture.isSummarizing}
-          <button class="btn-secondary prompt-btn" onclick={capture.generateSummary}>
-            ✨ Get Fun AI Facts?
-          </button>
-        {/if}
-
-        {#if capture.isSummarizing}
-          <p class="loading-text">Writing a cute summary...</p>
-        {/if}
-
-        {#if capture.aiSummary}
-          <div class="ai-summary-card">
-            <p>{capture.aiSummary}</p>
-          </div>
-        {/if}
-      </div>
-    {/if}
-
-    <button 
-      class="btn-primary submit-btn" 
-      onclick={capture.submitFlower} 
-      disabled={capture.isUploading || !capture.hasLocation || !capture.identificationComplete}
-    >
-      {capture.isUploading ? 'Saving...' : 'Save to Map 🗺️'}
-    </button>
   </section>
 
   <h2>Recent Scans</h2>
@@ -107,12 +117,17 @@
   .form-section { display: flex; flex-direction: column; gap: 1rem; background-color: #f8fcf8; }
   
   /* Buttons */
-  .camera-btn { text-align: center; background-color: #2e7d32; color: white; font-size: 1.1rem; padding: 1rem; border-radius: 8px; cursor: pointer; display: block; }
-  .submit-btn { margin-top: 1rem; background-color: #4caf50; color: white; font-size: 1.1rem; border: none; padding: 1rem; border-radius: 8px; cursor: pointer; }
+  .camera-btn { text-align: center; background-color: #2e7d32; color: white; font-size: 1.1rem; padding: 1.5rem; border-radius: 8px; cursor: pointer; display: block; font-weight: bold;}
+  .submit-btn { background-color: #4caf50; color: white; font-size: 1.1rem; border: none; padding: 1rem; border-radius: 8px; cursor: pointer; }
   .submit-btn:disabled { background-color: #ccc; cursor: not-allowed; }
   .btn-secondary { background: white; color: #2e7d32; border: 1px solid #4caf50; padding: 0.5rem 1rem; border-radius: 8px; cursor: pointer; font-weight: bold; }
   .prompt-btn { width: 100%; margin-top: 0.5rem; font-size: 0.9rem; background: #e8f5e9; }
   
+  /* Action Buttons (Retake vs Upload) */
+  .action-buttons { display: flex; gap: 1rem; margin-top: 0.5rem; }
+  .action-buttons .btn-primary { flex: 2; }
+  .action-buttons .btn-outline { flex: 1; background: transparent; border: 2px solid #ccc; color: #666; padding: 1rem; border-radius: 8px; cursor: pointer; font-weight: bold; }
+
   /* UI Elements */
   .preview-img { width: 100%; max-height: 300px; object-fit: cover; border-radius: 8px; }
   .status-bar { padding: 0.8rem; background: #81c587; border-radius: 8px; text-align: center; color: #2e7d32; font-weight: bold; }
