@@ -1,114 +1,12 @@
 <script>
   import { onMount } from 'svelte';
-  import { addFlowerPin, getAllFlowers } from '$lib/db.js';
-
-  let flowers = $state([]);
-  let isUploading = $state(false);
+  import { createCaptureState } from '$lib/capture.svelte.js';
   
-  let imageFile = $state(null);
-  let previewUrl = $state(null);
-  let lat = $state(null);
-  let lng = $state(null);
-  let commonName = $state('');
-  let botanicalName = $state('');
-  
-  let locationStatus = $state('Waiting for photo... 📷');
-  let exifWarning = $state(false);
-  let manualGpsLoading = $state(false);
+  const capture = createCaptureState();
 
-  onMount(async () => {
-    flowers = await getAllFlowers();
+  onMount(() => {
+    capture.loadFlowers();
   });
-
-  async function handleFileSelect(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    imageFile = file;
-    previewUrl = URL.createObjectURL(file);
-    
-    // Explicitly reset coordinates and warnings for new photos
-    lat = null;
-    lng = null;
-    exifWarning = false;
-    locationStatus = 'Scanning image for GPS data... 🔍';
-
-    try {
-      // Attempt to load exifr safely (Dynamic Import for Vercel)
-      const module = await import('exifr');
-      const exifr = module.default || module; 
-
-      const gps = await exifr.gps(file);
-      
-      if (gps) {
-        lat = gps.latitude;
-        lng = gps.longitude;
-        locationStatus = `Location found! ✅`;
-      } else {
-        locationStatus = 'No GPS in photo. Use manual button! 📍';
-        exifWarning = true; // Show fallback UI
-      }
-    } catch (err) {
-      console.error("Camera processing error:", err);
-      locationStatus = 'Error reading GPS. Try manual location. 📍';
-      exifWarning = true; // Show fallback UI
-    }
-  }
-
-  // The fallback method
-  function getManualLocation() {
-    manualGpsLoading = true;
-    locationStatus = 'Locating device... 📡';
-    
-    if (!navigator.geolocation) {
-      locationStatus = 'Geolocation is not supported by your browser';
-      manualGpsLoading = false;
-      return;
-    }
-    
-    // Browser will likely prompt you for permission here
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        lat = position.coords.latitude;
-        lng = position.coords.longitude;
-        locationStatus = `Live Location found! Lat: ${lat.toFixed(4)} ✅`;
-        exifWarning = false; // Turn off the warning since we got coordinates
-        manualGpsLoading = false;
-      },
-      (error) => {
-        console.error(error);
-        locationStatus = 'Browser denied location access ❌';
-        manualGpsLoading = false;
-      },
-      { enableHighAccuracy: true, timeout: 10000 } // Ask for accurate GPS
-    );
-  }
-
-  async function submitFlower() {
-    if (!imageFile || !lat || !lng) {
-      alert("Please ensure you have an image and location data!");
-      return;
-    }
-
-    isUploading = true;
-
-    const newFlower = await addFlowerPin({ lat, lng, commonName, botanicalName, file: imageFile });
-
-    if (newFlower) {
-      flowers = [newFlower, ...flowers];
-      imageFile = null;
-      previewUrl = null;
-      commonName = '';
-      botanicalName = '';
-      lat = null;
-      lng = null;
-      locationStatus = 'Waiting for photo... 📷';
-      exifWarning = false;
-    } else {
-      alert("Failed to upload. Check console.");
-    }
-    isUploading = false;
-  }
 </script>
 
 <div class="container">
@@ -120,43 +18,71 @@
       <input 
         type="file" 
         accept="image/*" 
-        onchange={handleFileSelect}
+        onchange={capture.handlePhotoCapture}
         hidden
       />
     </label>
 
-    {#if previewUrl}
-      <img src={previewUrl} alt="Preview" class="preview-img" />
+    {#if capture.previewUrl}
+      <img src={capture.previewUrl} alt="Preview" class="preview-img" />
     {/if}
 
-    <div class="status-bar" class:warning={exifWarning}>
-      {locationStatus}
+    <div class="status-bar" class:warning={capture.exifWarning}>
+      {capture.locationStatus}
     </div>
 
-    {#if exifWarning}
+    {#if capture.exifWarning}
       <div class="fallback-ui">
         <p class="helper-text">Could not extract location from image.</p>
         <button 
           class="btn-secondary" 
-          onclick={getManualLocation} 
-          disabled={manualGpsLoading}
+          onclick={capture.getManualLocation} 
+          disabled={capture.manualGpsLoading}
         >
-          {manualGpsLoading ? 'Loading...' : 'Use Current Device Location 📍'}
+          {capture.manualGpsLoading ? 'Loading...' : 'Use Current Device Location 📍'}
         </button>
       </div>
     {/if}
 
-    <input type="text" placeholder="Common Name (e.g. Daisy)" bind:value={commonName} />
-    <input type="text" placeholder="Botanical Name (Optional)" bind:value={botanicalName} />
+    {#if capture.isIdentifying}
+      <div class="ai-box loading">
+        <p>🤖 AI is identifying this plant...</p>
+      </div>
+    {:else if capture.identificationComplete}
+      <div class="ai-box success">
+        <h3>{capture.commonName}</h3>
+        <p class="botanical-name">{capture.botanicalName}</p>
+        
+        {#if !capture.aiSummary && !capture.isSummarizing}
+          <button class="btn-secondary prompt-btn" onclick={capture.generateSummary}>
+            ✨ Get Fun AI Facts?
+          </button>
+        {/if}
 
-    <button class="btn-primary submit-btn" onclick={submitFlower} disabled={isUploading || !lat}>
-      {isUploading ? 'Uploading...' : 'Save to Map 🗺️'}
+        {#if capture.isSummarizing}
+          <p class="loading-text">Writing a cute summary...</p>
+        {/if}
+
+        {#if capture.aiSummary}
+          <div class="ai-summary-card">
+            <p>{capture.aiSummary}</p>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    <button 
+      class="btn-primary submit-btn" 
+      onclick={capture.submitFlower} 
+      disabled={capture.isUploading || !capture.hasLocation || !capture.identificationComplete}
+    >
+      {capture.isUploading ? 'Saving...' : 'Save to Map 🗺️'}
     </button>
   </section>
 
   <h2>Recent Scans</h2>
   <div class="feed">
-    {#each flowers as flower (flower.id)}
+    {#each capture.flowers as flower (flower.id)}
       <div class="card feed-item">
         <img src={flower.image_path} alt={flower.common_name} loading="lazy" />
         <div class="info">
@@ -175,58 +101,41 @@
 </div>
 
 <style>
-  .status-bar {
-    padding: 0.8rem;
-    background: #81c587;
-    border-radius: 8px;
-    text-align: center;
-    color: #2e7d32;
-    font-weight: bold;
-  }
-  .status-bar.warning {
-    background: #ffebee;
-    color: #c62828;
-  }
-  .helper-text {
-    font-size: 0.8rem;
-    color: #c62828;
-    margin: -0.5rem 0 0.5rem 0;
-    text-align: center;
-  }
-  
+  /* Base styles */
   .container { padding: 1rem; padding-bottom: 5rem; }
-  .card { background: white; border-radius: var(--radius); padding: 1rem; box-shadow: var(--shadow); margin-bottom: 1.5rem; }
-  .form-section { display: flex; flex-direction: column; gap: 1rem; background-color: var(--primary-light); }
-  input[type="text"] { padding: 0.8rem; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; }
-  .camera-btn { text-align: center; background-color: var(--primary); font-size: 1.1rem; padding: 1rem; cursor: pointer; }
-  .submit-btn { margin-top: 1rem; background-color: var(--accent); color: white; font-size: 1.1rem; border: none; padding: 1rem; border-radius: 8px; cursor: pointer;}
+  .card { background: white; border-radius: 8px; padding: 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 1.5rem; }
+  .form-section { display: flex; flex-direction: column; gap: 1rem; background-color: #f8fcf8; }
+  
+  /* Buttons */
+  .camera-btn { text-align: center; background-color: #2e7d32; color: white; font-size: 1.1rem; padding: 1rem; border-radius: 8px; cursor: pointer; display: block; }
+  .submit-btn { margin-top: 1rem; background-color: #4caf50; color: white; font-size: 1.1rem; border: none; padding: 1rem; border-radius: 8px; cursor: pointer; }
   .submit-btn:disabled { background-color: #ccc; cursor: not-allowed; }
+  .btn-secondary { background: white; color: #2e7d32; border: 1px solid #4caf50; padding: 0.5rem 1rem; border-radius: 8px; cursor: pointer; font-weight: bold; }
+  .prompt-btn { width: 100%; margin-top: 0.5rem; font-size: 0.9rem; background: #e8f5e9; }
+  
+  /* UI Elements */
   .preview-img { width: 100%; max-height: 300px; object-fit: cover; border-radius: 8px; }
+  .status-bar { padding: 0.8rem; background: #81c587; border-radius: 8px; text-align: center; color: #2e7d32; font-weight: bold; }
+  .status-bar.warning { background: #ffebee; color: #c62828; }
+  .helper-text { font-size: 0.8rem; color: #c62828; margin: -0.5rem 0 0.5rem 0; text-align: center; }
+  
+  /* Fallback Box */
+  .fallback-ui { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; padding: 0.5rem; background: #fff3e0; border: 1px solid #ffb74d; border-radius: 8px; }
+  
+  /* AI Identification Box */
+  .ai-box { padding: 1rem; border-radius: 8px; text-align: center; }
+  .ai-box.loading { background: #e3f2fd; color: #1565c0; border: 1px dashed #64b5f6; }
+  .ai-box.success { background: white; border: 1px solid #a5d6a7; }
+  .ai-box h3 { margin: 0; color: #2e7d32; font-size: 1.2rem; }
+  .botanical-name { margin: 0.2rem 0; font-style: italic; color: #666; font-size: 0.9rem; }
+  .ai-summary-card { background: #fff8e1; border-left: 4px solid #ffb300; padding: 0.8rem; text-align: left; margin-top: 1rem; border-radius: 4px; font-size: 0.9rem; color: #555; }
+  .loading-text { font-size: 0.9rem; color: #888; font-style: italic; }
+
+  /* Feed */
   .feed { display: flex; flex-direction: column; gap: 1rem; }
   .feed-item { display: flex; gap: 1rem; padding: 0.5rem; }
   .feed-item img { width: 80px; height: 80px; object-fit: cover; border-radius: 8px; }
   .info { display: flex; flex-direction: column; justify-content: center; }
-  .info h3 { margin: 0 0 0.2rem 0; color: var(--primary); font-size: 1.1rem;}
-  .botanical { margin: 0; font-size: 0.9rem; font-style: italic; color: #666; }
+  .info h3 { margin: 0 0 0.2rem 0; color: #2e7d32; font-size: 1.1rem; }
   .coords { margin: 0.3rem 0 0 0; font-size: 0.8rem; color: #888; }
-
-  .fallback-ui {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem;
-    background: #fff3e0;
-    border: 1px solid #ffb74d;
-    border-radius: 8px;
-  }
-  .btn-secondary {
-    background: white;
-    color: var(--text);
-    border: 1px solid var(--accent);
-    padding: 0.5rem 1rem;
-    border-radius: 8px;
-    cursor: pointer;
-    font-weight: bold;
-  }
 </style>
