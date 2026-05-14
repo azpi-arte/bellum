@@ -1,4 +1,5 @@
 import { addFlowerPin, getAllFlowers } from '$lib/db.js';
+import { supabase } from '$lib/supabase.js'; 
 
 export function createCaptureState() {
   // --- 1. State Declarations ---
@@ -81,16 +82,26 @@ export function createCaptureState() {
     }
 
     // Step 2: Auto-Identify Plant
-    isIdentifying = true;
     try {
-      // Mocking the Pl@ntNet API delay for now
-      await new Promise(resolve => setTimeout(resolve, 1500)); 
-      commonName = 'Common Sunflower';
-      botanicalName = 'Helianthus annuus';
+      // Package the file up to send over the network
+      const formData = new FormData();
+      formData.append('image', file);
+
+      // Invoke our secure Supabase Edge Function
+      const { data, error } = await supabase.functions.invoke('identify-plant', {
+        body: formData,
+      });
+
+      if (error) throw error;
+      if (!data) throw new Error("No data returned from identification.");
+
+      commonName = data.commonName;
+      botanicalName = data.botanicalName;
       identificationComplete = true;
+      
     } catch (err) {
       console.error("Identification failed:", err);
-      commonName = 'Unknown Flower';
+      commonName = 'Unknown Plant';
       botanicalName = 'Unknown';
     } finally {
       isIdentifying = false;

@@ -1,6 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
+import { env } from '$env/dynamic/public';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// SvelteKit's way of grabbing variables starting with PUBLIC_
+export const supabase = createClient(
+  env.PUBLIC_SUPABASE_URL, 
+  env.PUBLIC_SUPABASE_ANON_KEY
+);
