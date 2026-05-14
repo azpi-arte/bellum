@@ -1,234 +1,188 @@
 <script>
+  import { supabase } from '$lib/supabase';
   import { onMount } from 'svelte';
-  import { addFlowerPin, getAllFlowers } from '$lib/db.js';
 
-  let flowers = $state([]);
-  let isUploading = $state(false);
+  // Form State
+  let flowerName = '';
+  let imageFile = null;
+  let previewUrl = null;
+  let lat = null;
+  let lng = null;
   
-  let imageFile = $state(null);
-  let previewUrl = $state(null);
-  let lat = $state(null);
-  let lng = $state(null);
-  let commonName = $state('');
-  let botanicalName = $state('');
-  
-  let locationStatus = $state('Waiting for photo... 📷');
-  let exifWarning = $state(false);
-  let manualGpsLoading = $state(false);
+  // UI State
+  let locationStatus = 'Waiting for photo or manual GPS...';
+  let isUploading = false;
+  let flowers = [];
 
+  // 1. Fetch flowers on load
   onMount(async () => {
-    flowers = await getAllFlowers();
+    fetchFlowers();
   });
 
+  async function fetchFlowers() {
+    const { data, error } = await supabase
+      .from('flowers')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (data) flowers = data;
+  }
+
+  // 2. Handle Image Selection & EXIF
   async function handleFileSelect(event) {
     const file = event.target.files[0];
     if (!file) return;
 
+    imageFile = file;
+    previewUrl = URL.createObjectURL(file);
+    locationStatus = 'Scanning photo for GPS data... 🔍';
+
     try {
-      // Attempt to load exifr safely
+      // Dynamic import to prevent Vercel build errors
       const module = await import('exifr');
-      const exifr = module.default || module; // Handle different packaging styles
-
-      imageFile = file;
-      previewUrl = URL.createObjectURL(file);
+      const exifr = module.default || module;
       
-      // Explicitly reset coordinates so we don't use old data
-      lat = null;
-      lng = null;
-      locationStatus = 'Scanning image for GPS data... 🔍';
-
       const gps = await exifr.gps(file);
       
       if (gps) {
         lat = gps.latitude;
         lng = gps.longitude;
-        locationStatus = `Location found! ✅`;
+        locationStatus = `Location found in photo! ✅`;
       } else {
-        locationStatus = 'No GPS in photo. Use manual button! 📍';
+        locationStatus = 'No GPS in photo. Please use manual button! 📍';
       }
     } catch (err) {
-      console.error("Camera processing error:", err);
-      // Even if it fails, let the user at least see the photo preview
-      imageFile = file;
-      previewUrl = URL.createObjectURL(file);
-      locationStatus = 'Error reading GPS. Try manual location.';
+      console.error("EXIF Error:", err);
+      locationStatus = 'GPS Scan failed. Use manual button! 📍';
     }
   }
 
-  // The fallback method
+  // 3. Manual GPS Fallback (The most reliable for campus testing)
   function getManualLocation() {
-    manualGpsLoading = true;
-    locationStatus = 'Locating device... 📡';
-    
+    locationStatus = 'Fetching live GPS... 🛰️';
     if (!navigator.geolocation) {
-      locationStatus = 'Geolocation is not supported by your browser';
-      manualGpsLoading = false;
+      locationStatus = 'Geolocation not supported by browser.';
       return;
     }
-    
-    // DuckDuckGo will likely prompt you for permission here
+
     navigator.geolocation.getCurrentPosition(
       (position) => {
         lat = position.coords.latitude;
         lng = position.coords.longitude;
-        locationStatus = `Live Location found! Lat: ${lat.toFixed(4)} ✅`;
-        exifWarning = false; // Turn off the warning since we got coordinates
-        manualGpsLoading = false;
+        locationStatus = 'Live GPS Acquired! ✅';
       },
-      (error) => {
-        console.error(error);
-        locationStatus = 'Browser denied location access ❌';
-        manualGpsLoading = false;
-      },
-      { enableHighAccuracy: true, timeout: 10000 } // Ask for accurate GPS
+      (err) => {
+        locationStatus = 'Could not get live location. Check permissions.';
+      }
     );
   }
 
+  // 4. Submit to Supabase
   async function submitFlower() {
-    if (!imageFile || !lat || !lng) {
-      alert("Please ensure you have an image and location data!");
+    if (!imageFile || !lat || !flowerName) {
+      alert('Missing Name, Photo, or Location!');
       return;
     }
 
     isUploading = true;
+    
+    try {
+      // A. Upload Image
+      const fileName = `${Date.now()}-${imageFile.name}`;
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('flower-images')
+        .upload(fileName, imageFile);
 
-    const newFlower = await addFlowerPin({ lat, lng, commonName, botanicalName, file: imageFile });
+      if (uploadError) throw uploadError;
 
-    if (newFlower) {
-      flowers = [newFlower, ...flowers];
+      // B. Get Public URL
+      const { data: urlData } = supabase.storage
+        .from('flower-images')
+        .getPublicUrl(fileName);
+
+      // C. Save to Database
+      const { error: dbError } = await supabase.from('flowers').insert([
+        {
+          name: flowerName,
+          image_url: urlData.publicUrl,
+          location: `SRID=4326;POINT(${lng} ${lat})`
+        }
+      ]);
+
+      if (dbError) throw dbError;
+
+      alert('Flower Added! 🌸');
+      // Reset form
+      flowerName = '';
       imageFile = null;
       previewUrl = null;
-      commonName = '';
-      botanicalName = '';
       lat = null;
       lng = null;
-      locationStatus = 'Waiting for photo... 📷';
-      exifWarning = false;
-    } else {
-      alert("Failed to upload. Check console.");
+      locationStatus = 'Waiting for next flower...';
+      fetchFlowers();
+      
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      isUploading = false;
     }
-    isUploading = false;
   }
 </script>
 
-<div class="container">
-  <h1>📸 FloraScan Capture</h1>
+<main class="p-4 max-w-md mx-auto">
+  <h1 class="text-2xl font-bold mb-4 text-green-700">FloraScan MVP 🌸</h1>
 
-  <section class="card form-section">
-    <label class="btn-primary camera-btn">
-      Take or Upload Photo
-      <input 
-        type="file" 
-        accept="image/*" 
-        onchange={handleFileSelect}
-        hidden
-      />
-    </label>
+  <div class="bg-white p-4 rounded-lg shadow-md border border-green-100 mb-6">
+    <input 
+      type="text" 
+      bind:value={flowerName} 
+      placeholder="Flower name (e.g. Red Rose)" 
+      class="w-full p-2 border rounded mb-4"
+    />
+
+    <input 
+      type="file" 
+      accept="image/*" 
+      capture="environment"
+      on:change={handleFileSelect}
+      class="mb-4 text-sm"
+    />
 
     {#if previewUrl}
-      <img src={previewUrl} alt="Preview" class="preview-img" />
+      <img src={previewUrl} alt="Preview" class="w-full h-48 object-cover rounded mb-4" />
     {/if}
 
-    <div class="status-bar" class:warning={exifWarning}>
+    <div class="text-sm mb-4 p-2 bg-gray-50 rounded italic text-gray-600">
       {locationStatus}
     </div>
 
-    {#if exifWarning}
-      <div class="fallback-ui">
-        <p class="helper-text">Could not extract location from image.</p>
-        <button 
-          class="btn-secondary" 
-          onclick={getManualLocation} 
-          disabled={manualGpsLoading}
-        >
-          {manualGpsLoading ? 'Loading...' : 'Use Current Device Location 📍'}
-        </button>
-      </div>
-    {/if}
+    <div class="flex gap-2 mb-4">
+      <button 
+        on:click={getManualLocation}
+        class="flex-1 bg-blue-500 text-white py-2 rounded text-sm"
+      >
+        Use Live GPS 📍
+      </button>
+    </div>
 
-    <input type="text" placeholder="Common Name (e.g. Daisy)" bind:value={commonName} />
-    <input type="text" placeholder="Botanical Name (Optional)" bind:value={botanicalName} />
-
-    <button class="btn-primary submit-btn" onclick={submitFlower} disabled={isUploading || !lat}>
-      {isUploading ? 'Uploading...' : 'Save to Map 🗺️'}
+    <button 
+      on:click={submitFlower} 
+      disabled={isUploading}
+      class="w-full bg-green-600 text-white py-3 rounded-lg font-bold disabled:bg-gray-400"
+    >
+      {isUploading ? 'Uploading...' : 'Submit Flower 🚀'}
     </button>
-  </section>
+  </div>
 
-  <h2>Recent Scans</h2>
-  <div class="feed">
-    {#each flowers as flower (flower.id)}
-      <div class="card feed-item">
-        <img src={flower.image_path} alt={flower.common_name} loading="lazy" />
-        <div class="info">
-          <h3>{flower.common_name || 'Unknown Flower'}</h3>
-          <p class="botanical">{flower.botanical_name || 'Unknown'}</p>
-          <p class="coords">
-            📍 {flower.location_json?.coordinates?.[1]?.toFixed(4) ?? '??'}, 
-              {flower.location_json?.coordinates?.[0]?.toFixed(4) ?? '??'}
-          </p>
+  <h2 class="text-xl font-bold mb-4">Recent Scans</h2>
+  <div class="grid grid-cols-1 gap-4">
+    {#each flowers as flower}
+      <div class="border rounded-lg overflow-hidden bg-white shadow-sm">
+        <img src={flower.image_url} alt={flower.name} class="w-full h-32 object-cover" />
+        <div class="p-2">
+          <p class="font-bold">{flower.name}</p>
+          <p class="text-xs text-gray-500">{new Date(flower.created_at).toLocaleDateString()}</p>
         </div>
       </div>
-    {:else}
-      <p>No flowers mapped yet!</p>
     {/each}
   </div>
-</div>
-
-<style>
-  /* Keep your existing styles and add these: */
-  .status-bar {
-    padding: 0.8rem;
-    background: #e8f5e9;
-    border-radius: 8px;
-    text-align: center;
-    color: #2e7d32;
-    font-weight: bold;
-  }
-  .status-bar.warning {
-    background: #ffebee;
-    color: #c62828;
-  }
-  .helper-text {
-    font-size: 0.8rem;
-    color: #c62828;
-    margin: -0.5rem 0 0.5rem 0;
-    text-align: center;
-  }
-  
-  /* Copy the rest from the previous CSS snippet */
-  .container { padding: 1rem; padding-bottom: 5rem; }
-  .card { background: white; border-radius: var(--radius); padding: 1rem; box-shadow: var(--shadow); margin-bottom: 1.5rem; }
-  .form-section { display: flex; flex-direction: column; gap: 1rem; background-color: var(--primary-light); }
-  input[type="text"] { padding: 0.8rem; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; }
-  .camera-btn { text-align: center; background-color: var(--primary); font-size: 1.1rem; padding: 1rem; cursor: pointer; }
-  .submit-btn { margin-top: 1rem; background-color: var(--accent); color: white; font-size: 1.1rem; border: none; padding: 1rem; border-radius: 8px; cursor: pointer;}
-  .submit-btn:disabled { background-color: #ccc; cursor: not-allowed; }
-  .preview-img { width: 100%; max-height: 300px; object-fit: cover; border-radius: 8px; }
-  .feed { display: flex; flex-direction: column; gap: 1rem; }
-  .feed-item { display: flex; gap: 1rem; padding: 0.5rem; }
-  .feed-item img { width: 80px; height: 80px; object-fit: cover; border-radius: 8px; }
-  .info { display: flex; flex-direction: column; justify-content: center; }
-  .info h3 { margin: 0 0 0.2rem 0; color: var(--primary); font-size: 1.1rem;}
-  .botanical { margin: 0; font-size: 0.9rem; font-style: italic; color: #666; }
-  .coords { margin: 0.3rem 0 0 0; font-size: 0.8rem; color: #888; }
-
-  .fallback-ui {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem;
-    background: #fff3e0;
-    border: 1px solid #ffb74d;
-    border-radius: 8px;
-  }
-  .btn-secondary {
-    background: white;
-    color: var(--text);
-    border: 1px solid var(--accent);
-    padding: 0.5rem 1rem;
-    border-radius: 8px;
-    cursor: pointer;
-    font-weight: bold;
-  }
-</style>
+</main>
